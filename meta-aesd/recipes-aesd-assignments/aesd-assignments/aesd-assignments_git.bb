@@ -8,7 +8,7 @@ SRC_URI = "git://github.com/Imel23/assignment-3-Imel23.git;protocol=ssh;branch=m
 
 PV = "1.0+git${SRCPV}"
 # TODO: set to reference a specific commit hash in your assignment repo
-SRCREV = "c10287e6f4cc332caa7f784b6610c638e6589cdc"
+SRCREV = "a39629efa9e29626f9d8dbdac950c17592221dc5"
 
 # This sets your staging directory based on WORKDIR, where WORKDIR is defined at 
 # https://docs.yoctoproject.org/ref-manual/variables.html?highlight=workdir#term-WORKDIR
