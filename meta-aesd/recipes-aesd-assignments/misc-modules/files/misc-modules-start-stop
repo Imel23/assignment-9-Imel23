@@ -1,0 +1,17 @@
+#!/bin/sh
+case "$1" in
+    start)
+        echo "Starting misc-modules"
+        modprobe hello
+        modprobe misc-faulty
+        ;;
+    stop)
+        echo "Stopping misc-modules"
+        rmmod hello
+        rmmod misc-faulty
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+esac
+exit 0

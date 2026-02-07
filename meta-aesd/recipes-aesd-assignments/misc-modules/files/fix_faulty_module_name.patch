@@ -1,0 +1,10 @@
+--- a/Makefile
++++ b/Makefile
+@@ -30,5 +30,6 @@
+ else
+     # called from kernel build system: just declare what our modules are
+     obj-m := hello.o hellop.o seq.o jiq.o sleepy.o complete.o \
+-             silly.o faulty.o kdatasize.o kdataalign.o jit.o
++             silly.o misc-faulty.o kdatasize.o kdataalign.o jit.o
++    misc-faulty-objs := faulty.o
+ endif

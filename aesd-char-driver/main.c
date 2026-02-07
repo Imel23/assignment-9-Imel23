@@ -17,11 +17,13 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include <linux/slab.h>
+#include <linux/uaccess.h>
 #include "aesdchar.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Your Name Here"); /** TODO: fill in your name **/
+MODULE_AUTHOR("Imad");
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
@@ -29,9 +31,8 @@ struct aesd_dev aesd_device;
 int aesd_open(struct inode *inode, struct file *filp)
 {
     PDEBUG("open");
-    /**
-     * TODO: handle open
-     */
+    struct aesd_dev *dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
+    filp->private_data = dev;
     return 0;
 }
 
@@ -47,22 +48,81 @@ int aesd_release(struct inode *inode, struct file *filp)
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
-    ssize_t retval = 0;
+    ssize_t retval;
+    size_t entry_offset;
     PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle read
-     */
+
+    struct aesd_dev *dev = filp->private_data;
+    int ret = mutex_lock_interruptible(&dev->lock);
+    if (ret) {
+        PDEBUG("mutex_lock_interruptible failed with %d", ret);
+        retval = -ERESTARTSYS;
+        return retval;
+    }
+    struct aesd_buffer_entry *entry = aesd_circular_buffer_find_entry_offset_for_fpos(&dev->circular_buffer, *f_pos, &entry_offset);
+    if (!entry) {
+        PDEBUG("aesd_circular_buffer_find_entry_offset_for_fpos failed");
+        mutex_unlock(&dev->lock);
+        retval = 0;
+        return retval;
+    }
+    if (entry_offset + count > entry->size) {
+        count = entry->size - entry_offset;
+    }
+    unsigned long noncopy_to_user = copy_to_user(buf, entry->buffptr + entry_offset, count);
+    if (noncopy_to_user > 0) {
+        PDEBUG("copy_to_user failed with %d", noncopy_to_user);
+        mutex_unlock(&dev->lock);
+        retval = -EFAULT;
+        return retval;
+    }
+    *f_pos += count;
+    retval = count;
+    mutex_unlock(&dev->lock);
     return retval;
 }
 
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
-    ssize_t retval = -ENOMEM;
+    ssize_t retval;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle write
-     */
+    struct aesd_dev *dev = filp->private_data;
+    int ret = mutex_lock_interruptible(&dev->lock);
+    if (ret) {
+        PDEBUG("mutex_lock_interruptible failed with %d", ret);
+        retval = -ERESTARTSYS;
+        return retval;
+    }
+    char *realloc_buffptr = krealloc(dev->working_entry.buffptr, dev->working_entry.size + count, GFP_KERNEL);
+    if (!realloc_buffptr) {
+        PDEBUG("krealloc failed");
+        mutex_unlock(&dev->lock);
+        retval = -ENOMEM;
+        return retval;
+    }
+    dev->working_entry.buffptr = realloc_buffptr;
+    unsigned long noncopy_from_user = copy_from_user(dev->working_entry.buffptr + dev->working_entry.size, buf, count);
+    if (noncopy_from_user > 0) {
+        PDEBUG("copy_from_user failed with %d", noncopy_from_user);
+        mutex_unlock(&dev->lock);
+        retval = -EFAULT;
+        return retval;
+    }
+    dev->working_entry.size += count;
+    retval = count;
+
+    if(dev->working_entry.buffptr[dev->working_entry.size-1] == '\n') {
+        if(dev->circular_buffer.full)
+        {
+            const char *old_entry = dev->circular_buffer.entry[dev->circular_buffer.in_offs].buffptr;
+            kfree(old_entry);
+        }
+        aesd_circular_buffer_add_entry(&dev->circular_buffer, &dev->working_entry);
+        dev->working_entry.buffptr = NULL;
+        dev->working_entry.size = 0;
+    }
+    mutex_unlock(&dev->lock);
     return retval;
 }
 struct file_operations aesd_fops = {
@@ -101,11 +161,7 @@ int aesd_init_module(void)
         return result;
     }
     memset(&aesd_device,0,sizeof(struct aesd_dev));
-
-    /**
-     * TODO: initialize the AESD specific portion of the device
-     */
-
+    mutex_init(&aesd_device.lock);
     result = aesd_setup_cdev(&aesd_device);
 
     if( result ) {
@@ -121,10 +177,13 @@ void aesd_cleanup_module(void)
 
     cdev_del(&aesd_device.cdev);
 
-    /**
-     * TODO: cleanup AESD specific poritions here as necessary
-     */
-
+    struct aesd_buffer_entry *entry;
+    size_t index;
+    AESD_CIRCULAR_BUFFER_FOREACH(entry,&aesd_device.circular_buffer,index) {
+        kfree(entry->buffptr);
+    }
+    kfree(aesd_device.working_entry.buffptr);
+    mutex_destroy(&aesd_device.lock);
     unregister_chrdev_region(devno, 1);
 }
 
