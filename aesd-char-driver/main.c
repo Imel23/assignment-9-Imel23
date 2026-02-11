@@ -125,12 +125,84 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     mutex_unlock(&dev->lock);
     return retval;
 }
+
+loff_t aesd_llseek(struct file *filp, loff_t offset, int whence) {
+    
+    struct aesd_dev *dev = filp->private_data;
+    loff_t new_pos;
+    size_t total_size = 0;
+    struct aesd_buffer_entry *entry;
+    size_t index;
+
+    if (mutex_lock_interruptible(&dev->lock)) {
+        return -ERESTARTSYS;
+    }
+
+    AESD_CIRCULAR_BUFFER_FOREACH(entry, &dev->circular_buffer, index) {
+        total_size += entry->size;
+    }
+
+    switch(whence) {
+        case SEEK_SET:
+            new_pos = offset;
+            break;
+        case SEEK_CUR:
+            new_pos = filp->f_pos + offset;
+            break;
+        case SEEK_END:
+            new_pos = total_size + offset;
+            break;
+    }
+    if(new_pos < 0 || new_pos > total_size) {
+        return -EINVAL;
+    }
+    filp->f_pos = new_pos;
+    mutex_unlock(&dev->lock);
+    return filp->f_pos;
+}
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    struct aesd_seekto_ioctl seek_to_data;
+    struct aesd_dev *dev = filp->private_data;
+    loff_t new_fpos = 0;
+    size_t i;
+
+    if(_IOC_TYPE(cmd) != AESD_IOC_MAGIC || _IOC_NR(cmd) > AESDCHAR_IOC_MAXNR)
+    {
+        return -ENOTTY;
+    }
+    if(cmd != AESDCHAR_IOCSEEKTO){
+        return -EINVAL;
+    }    
+    if (copy_from_user(&seek_to_data, (void __user *)arg, sizeof(seek_to_data)) != 0) {
+        return -EFAULT;
+    }
+    if (mutex_lock_interruptible(&dev->lock)) {
+        return -ERESTARTSYS;
+    }
+    if (seek_to_data.write_cmd_num >= dev->circular_buffer.entry_count ||
+        seek_to_data.write_cmd_offset >= dev->circular_buffer.entry[(dev->circular_buffer.out_offs + seek_to_data.write_cmd_num) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED].size) {
+        mutex_unlock(&dev->lock);
+        return -EINVAL;
+    }
+    for (i = 0; i < seek_to_data.write_cmd_num; i++) {
+        new_fpos += dev->circular_buffer.entry[(dev->circular_buffer.out_offs + i) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED].size;
+    }
+    new_fpos += seek_to_data.write_cmd_offset;
+    filp->f_pos = new_fpos;
+    mutex_unlock(&dev->lock);
+    return 0;
+}
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
     .write =    aesd_write,
     .open =     aesd_open,
     .release =  aesd_release,
+    .llseek =   aesd_llseek,
+    .unlocked_ioctl = aesd_ioctl,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
