@@ -20,6 +20,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include "aesdchar.h"
+#include "aesd_ioctl.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
@@ -152,8 +153,12 @@ loff_t aesd_llseek(struct file *filp, loff_t offset, int whence) {
         case SEEK_END:
             new_pos = total_size + offset;
             break;
+        default:
+            mutex_unlock(&dev->lock);
+            return -EINVAL;
     }
     if(new_pos < 0 || new_pos > total_size) {
+        mutex_unlock(&dev->lock);
         return -EINVAL;
     }
     filp->f_pos = new_pos;
@@ -163,10 +168,11 @@ loff_t aesd_llseek(struct file *filp, loff_t offset, int whence) {
 
 long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-    struct aesd_seekto_ioctl seek_to_data;
+    struct aesd_seekto seek_to_data;
     struct aesd_dev *dev = filp->private_data;
     loff_t new_fpos = 0;
     size_t i;
+    size_t entry_count;
 
     if(_IOC_TYPE(cmd) != AESD_IOC_MAGIC || _IOC_NR(cmd) > AESDCHAR_IOC_MAXNR)
     {
@@ -181,12 +187,22 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     if (mutex_lock_interruptible(&dev->lock)) {
         return -ERESTARTSYS;
     }
-    if (seek_to_data.write_cmd_num >= dev->circular_buffer.entry_count ||
-        seek_to_data.write_cmd_offset >= dev->circular_buffer.entry[(dev->circular_buffer.out_offs + seek_to_data.write_cmd_num) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED].size) {
+
+    /* Compute the number of entries in the circular buffer */
+    if (dev->circular_buffer.full) {
+        entry_count = AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    } else {
+        entry_count = (dev->circular_buffer.in_offs - dev->circular_buffer.out_offs
+                       + AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+                      % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    }
+
+    if (seek_to_data.write_cmd >= entry_count ||
+        seek_to_data.write_cmd_offset >= dev->circular_buffer.entry[(dev->circular_buffer.out_offs + seek_to_data.write_cmd) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED].size) {
         mutex_unlock(&dev->lock);
         return -EINVAL;
     }
-    for (i = 0; i < seek_to_data.write_cmd_num; i++) {
+    for (i = 0; i < seek_to_data.write_cmd; i++) {
         new_fpos += dev->circular_buffer.entry[(dev->circular_buffer.out_offs + i) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED].size;
     }
     new_fpos += seek_to_data.write_cmd_offset;
