@@ -3,10 +3,10 @@ SUMMARY = "AESD Char Driver"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 
-SRC_URI = "git://github.com/Imel23/assignment-8-Imel23.git;protocol=https;branch=main"
+SRC_URI = "git://github.com/Imel23/assignment-9-Imel23.git;protocol=https;branch=main"
 
 PV = "1.0+git${SRCPV}"
-SRCREV = "e4db424e9eb3905feba1d21ae25ecd7e70f8cf06"
+SRCREV = "9d6efdb49c3e5972e6e39cd5e7af04fc13e577c1"
 
 S = "${WORKDIR}/git/aesd-char-driver"
 
